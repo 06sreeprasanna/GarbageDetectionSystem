@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2 class="text-center">Blue Bin - Dry and other Waste</h2>
+<p class="text-center">Total Items: {{ image_count }}</p>
+
+<div class="row">
+    {% for image in images %}
+    <div class="col-md-3 mb-4">
+        <div class="card">
+            <img src="{{ url_for('static', filename='uploads/Blue/' + image) }}" class="card-img-top" alt="Waste Image">
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

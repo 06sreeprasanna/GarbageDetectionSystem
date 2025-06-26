@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Classification Result</title>
+</head>
+<body>
+    <h2>Classification Result</h2>
+    <img src="{{ url_for('static', filename='uploads/' + image) }}" width="200"><br>
+    <p><strong>Waste Type:</strong> {{ waste_type }}</p>
+    <p><strong>Predicted Bin:</strong> {{ predicted_bin }}</p>
+    <p><strong>Status:</strong> {{ status_msg }}</p>
+
+    <h3>Current Bin Levels</h3>
+    <ul>
+        {% for bin, level in bin_status.items() %}
+        <li>{{ bin }}: {{ level }}</li>
+        {% endfor %}
+    </ul>
+
+    <a href="{{ url_for('index') }}">Try Another</a>
+</body>
+</html>

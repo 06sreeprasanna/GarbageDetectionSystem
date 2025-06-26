@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2 class="text-center">{{ bin_name }} Bin Contents</h2>
+<p class="text-center">Total Items: {{ image_count }}</p>
+
+{% if images %}
+<div class="row mt-4">
+    {% for image in images %}
+    <div class="col-md-3 mb-4">
+        <div class="card shadow-sm">
+            <img src="{{ url_for('static', filename='uploads/' + bin_name + '/' + image) }}"
+                 class="card-img-top" alt="Bin image">
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-center mt-4">No images uploaded yet in {{ bin_name }} bin.</p>
+{% endif %}
+
+<div class="text-center mt-4">
+    <a href="{{ url_for('index') }}" class="btn btn-secondary">Back to Home</a>
+    <a href="{{ url_for('upload', bin_name=bin_name) }}" class="btn btn-primary ml-2">Upload More</a>
+</div>
+{% endblock %}

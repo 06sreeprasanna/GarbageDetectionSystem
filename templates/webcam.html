@@ -1,0 +1,491 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container">
+    <h2 class="text-center my-4">Real-time Waste Classification</h2>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    Camera Feed
+                </div>
+                <div class="card-body">
+                    <div class="ratio ratio-16x9">
+                        <video id="webcam" autoplay playsinline class="border rounded"></video>
+                    </div>
+                    <div class="text-center mt-3">
+                        <button id="capture-btn" class="btn btn-success">
+                            <i class="bi bi-camera-fill"></i> Capture & Classify
+                        </button>
+                        <button id="toggle-camera" class="btn btn-secondary ms-2">
+                            <i class="bi bi-arrow-repeat"></i> Switch Camera
+                        </button>
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="voiceToggle" checked>
+                            <label class="form-check-label" for="voiceToggle">Voice Feedback</label>
+                        </div>
+                        <div class="form-check form-switch mt-2">
+                            <input class="form-check-input" type="checkbox" id="autoCaptureToggle" checked>
+                            <label class="form-check-label" for="autoCaptureToggle">Auto Capture</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    Classification Results
+                </div>
+                <div class="card-body">
+                    <div id="result-container" class="text-center">
+                        <div class="mb-3">
+                            <img id="captured-image" src="" class="img-fluid rounded border" style="max-height: 200px; display: none;">
+                        </div>
+                        <div id="classification-result" class="p-3 rounded" style="min-height: 100px;">
+                            <p class="text-muted">Results will appear here after capture</p>
+                        </div>
+                        <div id="bin-suggestion" class="mt-3 p-3 rounded" style="display: none;">
+                            <h5>Suggested Bin:</h5>
+                            <div id="bin-display" class="p-2 rounded text-white"></div>
+                            <p id="confidence-display" class="mt-2 small"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="text-center mt-4">
+        <a href="{{ url_for('index') }}" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Back to Home
+        </a>
+    </div>
+</div>
+
+<script>
+// Webcam elements
+const video = document.getElementById('webcam');
+const captureBtn = document.getElementById('capture-btn');
+const toggleCameraBtn = document.getElementById('toggle-camera');
+const capturedImage = document.getElementById('captured-image');
+const resultContainer = document.getElementById('classification-result');
+const binSuggestion = document.getElementById('bin-suggestion');
+const binDisplay = document.getElementById('bin-display');
+const confidenceDisplay = document.getElementById('confidence-display');
+const voiceToggle = document.getElementById('voiceToggle');
+const autoCaptureToggle = document.getElementById('autoCaptureToggle');
+
+// Speech synthesis
+const synth = window.speechSynthesis;
+let voiceEnabled = true;
+let autoCaptureEnabled = true;
+
+// Camera state
+let stream = null;
+let autoCaptureInterval;
+const AUTO_CAPTURE_INTERVAL = 3000; // 3 seconds
+let currentDeviceId = null;
+let availableDevices = [];
+let isFrontCamera = false;
+let isInitialized = false;
+
+// Initialize webcam with device selection
+async function initWebcam(deviceId = null) {
+    try {
+        // Stop any existing stream
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+        }
+        
+        // Get available devices first if we haven't already
+        if (availableDevices.length === 0) {
+            await getCameraDevices();
+            if (availableDevices.length === 0) {
+                throw new Error("No cameras found");
+            }
+        }
+        
+        // If no specific device requested, use first available
+        if (!deviceId && availableDevices.length > 0) {
+            deviceId = availableDevices[0].deviceId;
+        }
+        
+        // Set constraints based on whether we have a specific device
+        const constraints = {
+            video: {
+                ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: deviceId ? undefined : 'environment' // Default to back camera if no device specified
+            },
+            audio: false
+        };
+        
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        currentDeviceId = deviceId;
+        
+        // Determine if this is a front camera
+        if (deviceId) {
+            const device = availableDevices.find(d => d.deviceId === deviceId);
+            isFrontCamera = device ? isDeviceFrontFacing(device) : false;
+        } else {
+            // If no deviceId, try to guess based on facingMode
+            isFrontCamera = constraints.video.facingMode === 'user';
+        }
+        
+        // Apply mirror effect for front camera
+        video.style.transform = isFrontCamera ? 'scaleX(-1)' : 'scaleX(1)';
+        
+        // Start auto-capture when camera is ready
+        video.onloadedmetadata = () => {
+            if (!isInitialized) {
+                isInitialized = true;
+                if (autoCaptureEnabled) {
+                    startAutoCapture();
+                }
+            }
+        };
+        
+    } catch (err) {
+        console.error("Error accessing camera:", err);
+        resultContainer.innerHTML = `
+            <div class="alert alert-danger">
+                <p>${err.message || 'Camera access error'}</p>
+                <p>Please ensure your camera is connected and permissions are granted.</p>
+                <button class="btn btn-sm btn-warning mt-2" onclick="initializeCamera()">
+                    Try Again
+                </button>
+            </div>
+        `;
+        
+        // Disable controls
+        captureBtn.disabled = true;
+        toggleCameraBtn.disabled = true;
+    }
+}
+
+// Helper function to detect front-facing cameras
+function isDeviceFrontFacing(device) {
+    const label = device.label.toLowerCase();
+    return label.includes('front') || 
+           label.includes('facetime') || 
+           label.includes('user');
+}
+
+// Get list of available camera devices
+async function getCameraDevices() {
+    try {
+        // First ensure we have permission
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        availableDevices = devices.filter(device => device.kind === 'videoinput');
+        console.log("Available cameras:", availableDevices);
+        
+        // Update UI based on available devices
+        if (availableDevices.length <= 1) {
+            toggleCameraBtn.disabled = true;
+            toggleCameraBtn.title = "No other cameras detected";
+        } else {
+            toggleCameraBtn.disabled = false;
+            toggleCameraBtn.title = "Switch between available cameras";
+        }
+    } catch (err) {
+        console.error("Error enumerating devices:", err);
+        availableDevices = [];
+    }
+}
+
+// Switch to next available camera
+function switchCamera() {
+    if (availableDevices.length < 2) return;
+    
+    const currentIndex = availableDevices.findIndex(device => device.deviceId === currentDeviceId);
+    const nextIndex = (currentIndex + 1) % availableDevices.length;
+    const nextDevice = availableDevices[nextIndex];
+    
+    initWebcam(nextDevice.deviceId);
+}
+
+// Auto-capture functionality
+function startAutoCapture() {
+    stopAutoCapture();
+    if (autoCaptureEnabled) {
+        autoCaptureInterval = setInterval(() => {
+            if (document.visibilityState === 'visible') {
+                captureAndClassify();
+            }
+        }, AUTO_CAPTURE_INTERVAL);
+    }
+}
+
+function stopAutoCapture() {
+    if (autoCaptureInterval) {
+        clearInterval(autoCaptureInterval);
+    }
+}
+
+// Capture and classify function
+async function captureAndClassify() {
+    try {
+        // Create canvas to capture image
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        
+        // Draw image (no mirroring here since we handle it on the video element)
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        // Display captured image
+        const imageData = canvas.toDataURL('image/jpeg', 0.85);
+        capturedImage.src = imageData;
+        capturedImage.style.display = 'block';
+        
+        // Show loading state
+        resultContainer.innerHTML = `
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p>Classifying waste...</p>
+        `;
+        binSuggestion.style.display = 'none';
+        
+        // Send to server for classification
+        const response = await fetch('/process_frame', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+                image: imageData,
+                timestamp: Date.now()
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.status !== 'success') {
+            throw new Error(data.message || 'Classification failed');
+        }
+        
+        // Display results
+        displayResults(data);
+        
+    } catch (err) {
+        console.error("Error capturing image:", err);
+        resultContainer.innerHTML = `
+            <div class="alert alert-danger">
+                ${err.message || 'Error processing image. Please try again.'}
+            </div>
+        `;
+    }
+}
+
+// Display classification results
+function displayResults(data) {
+    resultContainer.innerHTML = `
+        <h4>Classification Result</h4>
+        <p><strong>Waste Type:</strong> ${data.category || 'Unknown'}</p>
+    `;
+    
+    // Display bin suggestion with confidence
+    binSuggestion.style.display = 'block';
+    binDisplay.textContent = data.bin || 'Unknown';
+    binDisplay.className = 'p-2 rounded text-white ';
+    
+    // Set color based on bin
+    const binColorMap = {
+        'Red': 'danger',
+        'Green': 'success',
+        'Blue': 'primary',
+        'Yellow': 'warning',
+        'Black': 'dark'
+    };
+    const binColor = binColorMap[data.bin] || 'secondary';
+    binDisplay.classList.add(`bg-${binColor}`);
+    
+    // Show confidence if available
+    if (data.confidence) {
+        confidenceDisplay.textContent = `Confidence: ${(data.confidence * 100).toFixed(1)}%`;
+    } else {
+        confidenceDisplay.textContent = '';
+    }
+    
+    // Speak the result
+    if (data.category && data.bin && voiceEnabled) {
+        speakResult(data.category, data.bin);
+    }
+}
+
+// Speak the classification result
+function speakResult(category, bin) {
+    if (!voiceEnabled || !synth) return;
+    
+    synth.cancel();
+    
+    const utterance = new SpeechSynthesisUtterance();
+    utterance.text = `This appears to be ${category}. Please dispose in the ${bin} bin.`;
+    utterance.rate = 0.9;
+    utterance.pitch = 1.0;
+    
+    // Try to find a pleasant voice
+    const voices = synth.getVoices();
+    const preferredVoice = voices.find(voice => 
+        voice.name.includes('Female') || 
+        voice.name.includes('Woman') || 
+        voice.lang.includes('en')
+    );
+    
+    if (preferredVoice) {
+        utterance.voice = preferredVoice;
+    }
+    
+    synth.speak(utterance);
+}
+
+// Initialize camera with proper permissions
+async function initializeCamera() {
+    try {
+        // First request camera access
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        
+        // Then enumerate devices and initialize
+        await getCameraDevices();
+        await initWebcam();
+        
+        // Enable controls
+        captureBtn.disabled = false;
+        if (availableDevices.length > 1) {
+            toggleCameraBtn.disabled = false;
+        }
+        
+    } catch (err) {
+        console.error("Camera initialization failed:", err);
+        resultContainer.innerHTML = `
+            <div class="alert alert-danger">
+                <p>Failed to access camera:</p>
+                <p>${err.message || 'Please check your permissions and try again'}</p>
+                <button class="btn btn-sm btn-warning mt-2" onclick="initializeCamera()">
+                    Try Again
+                </button>
+            </div>
+        `;
+    }
+}
+
+// Event listeners
+captureBtn.addEventListener('click', () => {
+    stopAutoCapture();
+    captureAndClassify().finally(() => {
+        if (autoCaptureEnabled) {
+            startAutoCapture();
+        }
+    });
+});
+
+toggleCameraBtn.addEventListener('click', switchCamera);
+
+voiceToggle.addEventListener('change', () => {
+    voiceEnabled = voiceToggle.checked;
+});
+
+autoCaptureToggle.addEventListener('change', () => {
+    autoCaptureEnabled = autoCaptureToggle.checked;
+    if (autoCaptureEnabled) {
+        startAutoCapture();
+    } else {
+        stopAutoCapture();
+    }
+});
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', initializeCamera);
+
+// Clean up when leaving page
+window.addEventListener('beforeunload', () => {
+    stopAutoCapture();
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+    }
+    if (synth) {
+        synth.cancel();
+    }
+});
+
+// Handle page visibility changes
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        stopAutoCapture();
+    } else if (document.visibilityState === 'visible' && autoCaptureEnabled) {
+        startAutoCapture();
+    }
+});
+</script>
+
+<style>
+#bin-display {
+    font-size: 1.5rem;
+    font-weight: bold;
+    display: inline-block;
+    min-width: 100px;
+    transition: all 0.3s;
+}
+
+#webcam {
+    background-color: #f0f0f0;
+    object-fit: cover; /* Ensure video fills the container */
+}
+
+.card {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    transition: all 0.3s;
+    margin-bottom: 20px;
+}
+
+.card:hover {
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+}
+
+.btn-success {
+    background-color: #28a745;
+    border-color: #28a745;
+}
+
+.btn-success:hover {
+    background-color: #218838;
+    border-color: #1e7e34;
+}
+
+.alert {
+    border-radius: 0.5rem;
+}
+
+#captured-image {
+    max-width: 100%;
+    height: auto;
+    border: 2px solid #dee2e6;
+}
+
+.ratio-16x9 {
+    position: relative;
+    overflow: hidden;
+}
+
+.ratio-16x9 video {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+</style>
+{% endblock %}

@@ -1,0 +1,82 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2 class="text-center">Test Bin Classification</h2>
+<p class="text-center">Select a bin and upload images to test the classification system.</p>
+
+<div class="row">
+  {% for bin in ['Red', 'Green', 'Blue'] %}
+  <div class="col-md-4 mb-4">
+    <div class="card text-white {% if bin == 'Red' %}bg-danger{% elif bin == 'Green' %}bg-success{% else %}bg-primary{% endif %}">
+      <div class="card-header">{{ bin }} Bin</div>
+      <div class="card-body">
+        <form id="form-{{ bin }}" enctype="multipart/form-data">
+          <div class="form-group">
+            <label for="files-{{ bin }}">Select images:</label>
+            <input type="file" id="files-{{ bin }}" name="files" class="form-control-file" multiple accept="image/*">
+          </div>
+          <button type="button" onclick="handleUpload('{{ bin }}')" class="btn btn-light mt-2">Upload</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div id="uploadResults" class="mt-4"></div>
+
+<script>
+function beep() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  osc.type = "square";
+  osc.frequency.setValueAtTime(600, ctx.currentTime);
+  osc.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.3);
+}
+
+function handleUpload(bin) {
+  const form = document.getElementById(`form-${bin}`);
+  const formData = new FormData(form);
+  
+  // Add AJAX header
+  const headers = new Headers();
+  headers.append('X-Requested-With', 'XMLHttpRequest');
+  
+  fetch(`/upload/${bin}`, {
+    method: 'POST',
+    body: formData,
+    headers: headers
+  })
+  .then(res => res.json())
+  .then(data => {
+    const resultsDiv = document.getElementById('uploadResults');
+    let html = '<div class="alert alert-info"><h4>Upload Results:</h4><ul>';
+    
+    data.results.forEach(result => {
+      if (result.status === 'success') {
+        html += `<li>${result.filename}: Success (${result.category})</li>`;
+      } else if (result.status === 'wrong_bin') {
+        html += `<li class="text-danger">${result.filename}: Wrong bin (should be ${result.correct_bin})</li>`;
+        beep();
+      } else {
+        html += `<li class="text-warning">${result.filename}: Invalid file type</li>`;
+      }
+    });
+    
+    html += '</ul></div>';
+    resultsDiv.innerHTML = html;
+    
+    // Reset form if all successful
+    if (data.results.every(r => r.status === 'success')) {
+      form.reset();
+    }
+  })
+  .catch(err => {
+    console.error(err);
+    alert("Error uploading images.");
+  });
+}
+</script>
+{% endblock %}

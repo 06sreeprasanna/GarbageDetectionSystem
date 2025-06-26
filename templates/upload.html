@@ -1,0 +1,79 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2 class="text-center">Upload to {{ bin_name }} Bin</h2>
+
+<form method="POST" enctype="multipart/form-data" id="uploadForm">
+    <div class="form-group text-center">
+        <label for="files">Select one or more images (PNG, JPG, JPEG):</label>
+        <input type="file" class="form-control-file" id="files" name="files" multiple 
+               accept=".png,.jpg,.jpeg,.webp" style="max-width: 400px; margin: auto;">
+        <small class="form-text text-muted">Max file size: 10MB per file</small>
+    </div>
+    <div class="text-center mt-3">
+        <button type="submit" class="btn btn-primary">Upload</button>
+        <a href="{{ url_for('index') }}" class="btn btn-secondary ml-2">Back to Home</a>
+    </div>
+</form>
+
+<div id="uploadResults" class="mt-4"></div>
+
+<script>
+document.getElementById('uploadForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const formData = new FormData(this);
+    
+    // Show loading state
+    const resultsDiv = document.getElementById('uploadResults');
+    resultsDiv.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div><p>Processing files...</p>';
+    
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(err => Promise.reject(err));
+        }
+        return response.json();
+    })
+    .then(data => {
+        let html = '<div class="alert alert-info"><h4>Upload Results:</h4><ul>';
+        
+        data.results.forEach(result => {
+            if (result.status === 'success') {
+                html += `<li>${result.filename}: Successfully added to ${result.bin} bin (${result.category})</li>`;
+            } else if (result.status === 'wrong_bin') {
+                html += `<li class="text-danger">${result.filename}: Belongs in ${result.correct_bin} bin (detected as ${result.category})</li>`;
+            } else if (result.status === 'invalid_file_type') {
+                html += `<li class="text-warning">${result.filename}: Invalid file type (only PNG, JPG, JPEG allowed)</li>`;
+            } else if (result.status === 'file_too_large') {
+                html += `<li class="text-warning">${result.filename}: ${result.message}</li>`;
+            } else {
+                html += `<li class="text-warning">${result.filename}: ${result.message || 'Error processing file'}</li>`;
+            }
+        });
+        
+        html += '</ul></div>';
+        resultsDiv.innerHTML = html;
+        
+        // Reset form if all successful
+        if (data.results.every(r => r.status === 'success')) {
+            document.getElementById('uploadForm').reset();
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        resultsDiv.innerHTML = `
+            <div class="alert alert-danger">
+                ${error.error || 'Error uploading files'}
+                ${error.message ? `<p>${error.message}</p>` : ''}
+            </div>
+        `;
+    });
+});
+</script>
+{% endblock %}
